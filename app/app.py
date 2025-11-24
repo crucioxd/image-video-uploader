@@ -1,16 +1,16 @@
-from fastapi import FastAPI, HTTPException, Depends, File, UploadFile, Form
-from app.schemas import PostSchema, UserRead, UserCreate, UserUpdate
+from fastapi import FastAPI, HTTPException, File, UploadFile, Form, Depends
+from app.schemas import PostCreate, PostResponse, UserRead, UserCreate, UserUpdate
 from app.db import Post, create_db_and_tables, get_async_session, User
 from sqlalchemy.ext.asyncio import AsyncSession
 from contextlib import asynccontextmanager
 from sqlalchemy import select
-from imagekitio.models.UploadFileRequestOptions import UploadFileRequestOptions
 from app.images import imagekit
+from imagekitio.models.UploadFileRequestOptions import UploadFileRequestOptions
 import shutil
 import os
 import uuid
 import tempfile
-from app.users import current_active_user, fastapi_users, auth_backend
+from app.users import auth_backend, current_active_user, fastapi_users
 
 
 @asynccontextmanager
@@ -20,32 +20,29 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(lifespan=lifespan)
 
-
 app.include_router(fastapi_users.get_auth_router(
-    auth_backend), prefix="/auth/jwt", tags=["auth"])
-app.include_router(fastapi_users.get_register_router(),
-                   prefix="/auth", tags=["auth"])
+    auth_backend), prefix='/auth/jwt', tags=["auth"])
+app.include_router(fastapi_users.get_register_router(
+    UserRead, UserCreate), prefix="/auth", tags=["auth"])
 app.include_router(fastapi_users.get_reset_password_router(),
                    prefix="/auth", tags=["auth"])
-app.include_router(fastapi_users.get_verify_router(),
-                   prefix="/auth", tags=["auth"])
+app.include_router(fastapi_users.get_verify_router(
+    UserRead), prefix="/auth", tags=["auth"])
 app.include_router(fastapi_users.get_users_router(
-    UserRead, UserCreate, UserUpdate), prefix="/users", tags=["users"])
+    UserRead, UserUpdate), prefix="/users", tags=["users"])
 
 
 @app.post("/upload")
 async def upload_file(
-    file: UploadFile = File(...),
-    caption: str = Form(...),
-    user: User = Depends(current_active_user),
-    session: AsyncSession = Depends(get_async_session)
+        file: UploadFile = File(...),
+        caption: str = Form(""),
+        user: User = Depends(current_active_user),
+        session: AsyncSession = Depends(get_async_session)
 ):
-
     temp_file_path = None
 
     try:
         with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(file.filename)[1]) as temp_file:
-
             temp_file_path = temp_file.name
             shutil.copyfileobj(file.file, temp_file)
 
@@ -66,9 +63,7 @@ async def upload_file(
                 file_type="video" if file.content_type.startswith(
                     "video/") else "image",
                 file_name=upload_result.name
-
             )
-
             session.add(post)
             await session.commit()
             await session.refresh(post)
@@ -84,13 +79,11 @@ async def upload_file(
 
 @app.get("/feed")
 async def get_feed(
-    user: User = Depends(current_active_user),
-    session: AsyncSession = Depends(get_async_session),
-
-
+        session: AsyncSession = Depends(get_async_session),
+        user: User = Depends(current_active_user),
 ):
     result = await session.execute(select(Post).order_by(Post.created_at.desc()))
-    posts = [row[0] for row in result.fetchall()]
+    posts = [row[0] for row in result.all()]
 
     result = await session.execute(select(User))
     users = [row[0] for row in result.all()]
@@ -120,11 +113,8 @@ async def delete_post(post_id: str, session: AsyncSession = Depends(get_async_se
     try:
         post_uuid = uuid.UUID(post_id)
 
-        # Execute the query and get the raw database result
         result = await session.execute(select(Post).where(Post.id == post_uuid))
-
-        # Extract the Post object from the result (or None if no post found)
-        post = result.scalars().first()   # <-- FIXED (added parentheses)
+        post = result.scalars().first()
 
         if not post:
             raise HTTPException(status_code=404, detail="Post not found")
@@ -137,6 +127,5 @@ async def delete_post(post_id: str, session: AsyncSession = Depends(get_async_se
         await session.commit()
 
         return {"success": True, "message": "Post deleted successfully"}
-
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

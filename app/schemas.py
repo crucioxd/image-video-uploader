@@ -3,7 +3,7 @@ from fastapi_users import schemas
 import uuid
 
 
-class PostSchema(BaseModel):
+class PostCreate(BaseModel):
     title: str
     content: str
 
